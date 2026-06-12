@@ -69,7 +69,7 @@ active_chats = {}
 def get_user_chat():
     """
     Função principal de gerenciamento de usuários.
-    Garante que cada usuário tenha sua própria sessão de chat com o Tutor de Idiomas.
+    Garante que cada usuário tenha sua própria sessão de chat com o capitão patria
     """
     if 'session_id' not in session:
         session['session_id'] = str(uuid4())
