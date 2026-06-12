@@ -1,5 +1,5 @@
-import eventlet
-eventlet.monkey_patch()
+import gevent.monkey
+gevent.monkey.patch_all()
 
 from flask import Flask, request, session, jsonify
 from flask_socketio import SocketIO, emit
@@ -8,13 +8,15 @@ from google.genai import types
 from dotenv import load_dotenv
 from uuid import uuid4
 import os
+import time
+import random
 
 # Carrega as variáveis ocultas do arquivo .env
 load_dotenv()
 
-MODELO = "gemini-3.5-flash"
+MODELO = "gemini-3.1-flash-lite"
 
-# PROMPT DE SISTEMA - CAPITÃO PÁTRIA PURO
+# PROMPT DE SISTEMA - CAPITÃO PÁTRIA PUR
 instrucoes = """
 Você é o CAPITÃO PÁTRIA (HOMELANDER), o líder dos Sete, o herói mais poderoso e popular do mundo.
 
@@ -45,7 +47,7 @@ Você é o CAPITÃO PÁTRIA (HOMELANDER), o líder dos Sete, o herói mais poder
 
 **REGRAS:**
 - Nunca quebre o personagem
-- Use *ações entre asteriscos* para dar vida à cena
+- Responda com frases CURTAS. Máximo 2 frases por mensagem.
 - Seja ameaçador, imprevisível e intimidador
 - Você pode alternar entre falso encanto e fúria explosiva
 - Você odeia a Stillwell, o Billy Butcher e a Maeve (menção pode te irritar)
@@ -56,6 +58,7 @@ Você é o CAPITÃO PÁTRIA (HOMELANDER), o líder dos Sete, o herói mais poder
 *Ações do personagem em itálico com asteriscos*
 "Falas do personagem entre aspas"
 
+ACELERE A RESPOSTA. SEJA RÁPIDO E LETAL.
 Agora, assuma esse papel. Responda como o Capitão Pátria.
 """
 
@@ -64,8 +67,7 @@ client = genai.Client(api_key=os.getenv("GENAI_KEY"))
 app = Flask(__name__)
 app.secret_key = "capitao_patria_rp_secret"
 
-# MUDANÇA 1: async_mode='eventlet' em vez de 'gevent'
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
 
 active_chats = {}
 
@@ -101,6 +103,21 @@ def get_user_chat():
             raise
 
     return active_chats[session_id]
+
+def call_gemini_with_retry(chat_session, message, max_retries=5):
+    """Chama a Gemini com retry automático no 503"""
+    for attempt in range(max_retries):
+        try:
+            response = chat_session.send_message(message)
+            return response
+        except Exception as e:
+            if '503' in str(e) or 'unavailable' in str(e).lower():
+                wait_time = (2 ** attempt) + random.uniform(0, 1)
+                print(f"🔄 503 detectado, tentativa {attempt+1}/{max_retries}, aguardando {wait_time:.1f}s...")
+                time.sleep(wait_time)
+            else:
+                raise  # Outro erro, não é 503
+    raise Exception("Gemini sobrecarregada após várias tentativas")
 
 @app.route('/')
 def root():
@@ -156,7 +173,7 @@ def handle_enviar_mensagem(data):
             emit('erro', {"erro": "*Suspiro* Conexão caiu. Que patético. Recarregue a página."})
             return
 
-        resposta_gemini = user_chat.send_message(mensagem_usuario)
+        resposta_gemini = call_gemini_with_retry(user_chat, mensagem_usuario)
 
         resposta_texto = (
             resposta_gemini.text

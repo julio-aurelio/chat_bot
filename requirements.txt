@@ -1,8 +1,7 @@
-Flask
-Flask-CORS
-Flask-SocketIO
-python-socketio
-google-generativeai
-python-dotenv
-gunicorn
-eventlet
+flask>=3.0.0
+flask-socketio>=5.3.0
+python-socketio>=5.10.0
+gevent>=24.0.0
+gevent-websocket>=0.10.0
+google-generativeai>=0.8.0
+python-dotenv>=1.0.0
