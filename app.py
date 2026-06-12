@@ -1,5 +1,5 @@
-import gevent.monkey
-gevent.monkey.patch_all()
+import eventlet
+eventlet.monkey_patch()
 
 from flask import Flask, request, session, jsonify
 from flask_socketio import SocketIO, emit
@@ -14,7 +14,7 @@ load_dotenv()
 
 MODELO = "gemini-2.0-flash-exp"
 
-# PROMPT DE SISTEMA - CAPITÃO PÁTRIA PUR
+# PROMPT DE SISTEMA - CAPITÃO PÁTRIA PURO
 instrucoes = """
 Você é o CAPITÃO PÁTRIA (HOMELANDER), o líder dos Sete, o herói mais poderoso e popular do mundo.
 
@@ -64,7 +64,8 @@ client = genai.Client(api_key=os.getenv("GENAI_KEY"))
 app = Flask(__name__)
 app.secret_key = "capitao_patria_rp_secret"
 
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
+# MUDANÇA 1: async_mode='eventlet' em vez de 'gevent'
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
 active_chats = {}
 

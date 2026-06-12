@@ -1,8 +1,8 @@
 Flask
 Flask-CORS
 Flask-SocketIO
+python-socketio
 google-generativeai
 python-dotenv
 gunicorn
-gevent
-gevent-websocket
+eventlet
