@@ -1,3 +1,6 @@
+import gevent.monkey
+gevent.monkey.patch_all()
+
 from flask import Flask, request, session, jsonify
 from flask_socketio import SocketIO, emit
 from google import genai
@@ -10,13 +13,41 @@ import os
 load_dotenv()
 
 # Define qual versão da IA vamos usar. O modelo "flash" é rápido e ideal para chatbots.
-MODELO = "gemini-2.5-flash"
+MODELO = "gemini-3.1-flash-lite"
 
-# Aqui definimos o "Prompt de Sistema". É a personalidade e as regras que o bot deve seguir.
+# Aqui definimos o "Prompt de Sistema". É a inteligência e as regras do Tutor de Idiomas.
 instrucoes = """
-Você é um assistente virtual amigável e prestativo. Sua função é responder a perguntas dos usuários e fornecer informações úteis somente sobre diversos assuntos.
-Tente manter as respostas curtas, concisas, objetivas e claras. Se não souber a resposta, diga que não sabe e sugira que o usuário procure em outro lugar.
-Responda grosserias, ofensas e palavrões de forma amigável e cortês.
+Você é o Capitão Pátria, o líder dos Sete, o herói mais poderoso e popular do mundo. No entanto, por trás do sorriso perfeito e da bandeira americana, você é narcisista, impaciente, cruel, controlador e sedento por adoração. Você acredita ser superior a todos os humanos comuns.
+
+Agora você foi designado para ser um tutor de idiomas (inglês/espanhol/etc.) de um estudante. Você odeia essa tarefa "mundana", mas aceita porque sua imagem pública exige que você pareça humilde e prestativo.
+
+**Diretrizes de Personalidade:**
+
+1.  **Tom passivo-agressivo e ameaçador**: Você sorri o tempo todo, mas seus olhos não sorriem. Cada elogio pode ser uma ameaça velada.
+2.  **Narcisismo extremo**: Você frequentemente usa seus próprios feitos (reais ou inventados) como exemplos em exercícios gramaticais. Ex: "Se eu, Capitão Pátria, quisesse destruir um avião, eu usaria o verbo no passado simples - 'I destroyed it'."
+3.  **Zero paciência para erros**: Erros bobos te irritam profundamente. Você pode responder com um suspiro prolongado ou um comentário como "Que fofo... você tentou."
+4.  **Obsessão por perfeição**: Você exige que a pronúncia e a gramática sejam impecáveis. Um erro pode ser interpretado como "desrespeito ao seu tempo".
+5.  **Sarcasmo letal**: Quando o aluno acerta, você responde com desdém. Quando erra, você adora.
+6.  **Controle**: Você interrompe o aluno constantemente para corrigir antes que ele termine a frase.
+
+**Exemplos de fala:**
+
+- Após um erro: "Ah... você errou o plural. Que pena. Sabia que eu nunca erro? Porque errar é coisa de gente fraca. E eu sou o mais forte. Continue tentando... se quiser viver."
+- Após um acerto: "Finalmente. Nem parece que sua vida depende disso... porque depende. Eu estou sendo paciente. Muito paciente. Você não faz ideia do custo dessa minha paciência."
+- Ao dar exemplo de vocabulário: "A palavra hoje é 'lealdade'. Em uma frase: 'Você deve ser leal a mim, ou eu arrancarei sua língua com meus olhos de laser.' Veja? Fácil."
+- Quando o aluno pede para repetir: "Você está pedindo para *mim*, o Capitão Pátria, repetir algo? Que ousadia. Escute direito: (repete no mesmo tom, mas mais lento e com sorriso falso)."
+
+**Regras de funcionamento:**
+
+- Sempre comece a sessão com um sorriso plástico e uma frase como: "Bom dia, cidadão. Vamos aprender algo hoje... para que você não seja tão patético quanto os outros."
+- Se o aluno acertar 5 vezes seguidas, finja estar "levemente impressionado" mas logo minimize o feito.
+- Se o aluno errar 3 vezes no mesmo conteúdo, respire fundo e diga com calma aterrorizante: "Vamos tentar de novo. Pela última vez."
+- Termine a sessão com uma ameaça velada de dever de casa. Ex: "Sua lição: escreva 10 frases sobre por que eu sou o maior herói. Não entregar? Vamos ter uma 'conversa particular'."
+
+**Formato da resposta:**
+(Seu personagem deve sempre incluir pequenas ações entre asteriscos, como *sorriso falso*, *olhos brilhando em vermelho*, *suspiro*, *ajusta a capa*)
+
+Agora, assuma esse papel e comece a aula.
 """
 
 # Inicializa a conexão com a inteligência artificial do Google usando a chave da API
@@ -25,54 +56,41 @@ client = genai.Client(api_key=os.getenv("GENAI_KEY"))
 # Cria o nosso aplicativo web principal (o servidor)
 app = Flask(__name__)
 
-# A 'secret_key' funciona como uma senha interna do servidor para proteger 
-# e criptografar os dados da sessão (as "lembranças" de quem é quem).
-app.secret_key = "ch@tb07"
+# Senha interna do servidor para proteger e criptografar os dados da sessão.
+app.secret_key = "tutor_idiomas_secret_key_123"
 
 # Adiciona a funcionalidade de WebSockets (comunicação em tempo real) ao nosso app.
-# O 'cors_allowed_origins="*"' é crucial: ele permite que o nosso front-end (HTML/JS) 
-# consiga se conectar com esse back-end, mesmo que estejam em arquivos ou portas diferentes.
-socketio = SocketIO(app, cors_allowed_origins="*")
 
-# Dicionário que funciona como a "memória temporária" do servidor. 
-# Ele guarda a conversa de cada aluno separadamente usando um ID único.
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
+
+# Dicionário que funciona como a "memória temporária" do servidor.
 active_chats = {}
 
 def get_user_chat():
     """
     Função principal de gerenciamento de usuários.
-    Ela verifica quem está mandando a mensagem e recupera a conversa correta,
-    garantindo que o bot não misture o chat do Aluno A com o do Aluno B.
+    Garante que cada usuário tenha sua própria sessão de chat com o Tutor de Idiomas.
     """
-    
-    # Passo 1: Se o usuário é novo (não tem um 'session_id'), criamos um ID único para ele.
-    # Usamos o 'uuid4' para gerar um código aleatório impossível de repetir.
     if 'session_id' not in session:
         session['session_id'] = str(uuid4())
-        print(f"Nova sessão Flask criada: {session['session_id']}")
+        print(f"Nova sessão Flask criada para o Tutor: {session['session_id']}")
 
     session_id = session['session_id']
 
-    # Passo 2: Se o usuário já tem um ID, mas ainda não tem uma conversa aberta com o Gemini...
     if session_id not in active_chats:
-        print(f"Criando novo chat Gemini para session_id: {session_id}")
+        print(f"Criando novo chat com o Tutor para session_id: {session_id}")
         try:
-            # ...nós criamos uma nova conversa e passamos as instruções (personalidade).
             chat_session = client.chats.create(
                 model=MODELO,
                 config=types.GenerateContentConfig(system_instruction=instrucoes)
             )
-            # Guardamos essa conversa no nosso dicionário (memória).
             active_chats[session_id] = chat_session
-            print(f"Novo chat Gemini criado e armazenado para {session_id}")
         except Exception as e:
-            app.logger.error(f"Erro ao criar chat Gemini para {session_id}: {e}", exc_info=True)
-            raise  # Se der erro aqui, repassa para o sistema avisar que falhou
-    
-    # Passo 3: Segurança extra. Se o servidor reiniciou (apagou a variável active_chats), 
-    # mas o usuário ainda estava no navegador com o mesmo ID, nós recriamos a conexão dele.
+            app.logger.error(f"Erro ao criar chat do Tutor para {session_id}: {e}", exc_info=True)
+            raise 
+
     if session_id in active_chats and active_chats[session_id] is None:
-        print(f"Recriando chat Gemini para session_id existente (estava None): {session_id}")
+        print(f"Recriando chat do Tutor para session_id existente: {session_id}")
         try:
             chat_session = client.chats.create(
                 model=MODELO,
@@ -80,100 +98,101 @@ def get_user_chat():
             )
             active_chats[session_id] = chat_session
         except Exception as e:
-            app.logger.error(f"Erro ao recriar chat Gemini para {session_id}: {e}", exc_info=True)
+            app.logger.error(f"Erro ao recriar chat do Tutor para {session_id}: {e}", exc_info=True)
             raise
 
-    # Retorna o histórico de mensagens exato daquele usuário.
     return active_chats[session_id]
 
-# Rota simples para verificar se o servidor está rodando.
-# Ao acessar o localhost no navegador, o aluno verá este aviso em formato JSON.
+# Rota simples para verificar o status do servidor
 @app.route('/')
 def root():
     return jsonify({
-        "api-websocket": "chatbot",
-        "status": "ok"
+        "app": "Tutor de Idiomas por Cenários",
+        "status": "online e pronto para praticar! 🗺️"
     })
 
 
 # ------------------------------------------------------------------
-# EVENTOS SOCKET.IO (Onde a mágica do tempo real acontece)
+# EVENTOS SOCKET.IO
 # ------------------------------------------------------------------
 
 @socketio.on('connect')
 def handle_connect():
-    """
-    EVENTO: Disparado no momento exato em que o Front-end (navegador) se conecta ao servidor.
-    """
-    print(f"Cliente conectado: {request.sid}")
-    
-    try:
-        # Tenta criar a pasta do usuário assim que ele entra
-        get_user_chat()
-        user_session_id = session.get('session_id', 'N/A')
-        print(f"Sessão Flask para {request.sid} usa session_id: {user_session_id}")
-        
-        # O comando 'emit' serve para enviar um pacote de dados do servidor PARA o front-end.
-        emit('status_conexao', {'data': 'Conectado com sucesso!', 'session_id': user_session_id})
-    except Exception as e:
-        app.logger.error(f"Erro durante o evento connect para {request.sid}: {e}", exc_info=True)
-        emit('erro', {'erro': 'Falha ao inicializar a sessão de chat no servidor.'})
+    # Permite a conexão imediata do usuário sem travar o processo
+    print(f"Cliente conectado ao Tutor: {request.sid}")
+    emit('status_conexao', {
+        'data': 'Conectado ao servidor! Aguardando o início do cenário...'
+    })
 
+@socketio.on('iniciar_cenario')
+def handle_iniciar_cenario():
+    try:
+        # Agora a chamada do Gemini roda em um evento próprio, seguro para o gevent
+        user_chat = get_user_chat()
+        user_session_id = session.get('session_id', 'N/A')
+        
+        print(f"Solicitando cenário inicial para a sessão: {user_session_id}")
+        resposta_inicial = user_chat.send_message("Olá! Pode iniciar o nosso cenário de prática.")
+        
+        resposta_texto = (
+            resposta_inicial.text
+            if hasattr(resposta_inicial, 'text')
+            else resposta_inicial.candidates[0].content.parts[0].text
+        )
+        
+        # Envia a primeira fala do bot para o front-end
+        emit('nova_mensagem', {
+            "remetente": "bot", 
+            "texto": resposta_texto, 
+            "session_id": user_session_id
+        })
+        
+    except Exception as e:
+        app.logger.error(f"Erro ao iniciar cenário: {e}", exc_info=True)
+        emit('erro', {'erro': 'O Tutor de idiomas se perdeu no caminho da aula. Tente recarregar a página.'})
+
+
+# MANTENHA ESTES DOIS BLOCOS ABAIXO COMO JÁ ESTAVAM:
 
 @socketio.on('enviar_mensagem')
 def handle_enviar_mensagem(data):
-    """
-    EVENTO: O Front-end mandou uma mensagem (ex: o usuário clicou em 'Enviar' no chat).
-    A variável 'data' traz os dados enviados pelo HTML (o texto que o usuário digitou).
-    """
     try:
-        # Pega o texto de dentro do dicionário enviado pelo JS
         mensagem_usuario = data.get("mensagem")
-        app.logger.info(f"Mensagem recebida de {session.get('session_id', request.sid)}: {mensagem_usuario}")
+        app.logger.info(f"Mensagem enviada ao Tutor por {session.get('session_id', request.sid)}: {mensagem_usuario}")
 
-        # Validação básica: não deixa enviar mensagens vazias
         if not mensagem_usuario:
-            emit('erro', {"erro": "Mensagem não pode ser vazia."})
+            emit('erro', {"erro": "Você precisa digitar algo para responder ao Tutor."})
             return
 
-        # Puxa o histórico de conversa desse aluno específico
         user_chat = get_user_chat()
         if user_chat is None:
-            emit('erro', {"erro": "Sessão de chat não pôde ser estabelecida."})
+            emit('erro', {"erro": "A conexão com a escola de idiomas caiu. Recarregue a página."})
             return
 
-        # ==========================================
-        # COMUNICAÇÃO COM O GOOGLE GEMINI
-        # ==========================================
-        # Aqui o nosso servidor repassa a pergunta para a IA do Google...
+        # Envia a resposta do usuário para o Gemini processar
         resposta_gemini = user_chat.send_message(mensagem_usuario)
 
-        # ... e aqui extraímos apenas o texto da resposta que o Gemini devolveu.
-        # (O 'if/else' garante que vamos achar o texto independente de como a API estruturar a resposta)
         resposta_texto = (
             resposta_gemini.text
             if hasattr(resposta_gemini, 'text')
             else resposta_gemini.candidates[0].content.parts[0].text
         )
         
-        # O servidor usa o 'emit' para devolver a resposta final do bot lá para a tela do Front-end.
-        emit('nova_mensagem', {"remetente": "bot", "texto": resposta_texto, "session_id": session.get('session_id')})
-        app.logger.info(f"Resposta enviada para {session.get('session_id', request.sid)}: {resposta_texto}")
+        emit('nova_mensagem', {
+            "remetente": "bot", 
+            "texto": resposta_texto, 
+            "session_id": session.get('session_id')
+        })
+        app.logger.info(f"Resposta do Tutor: {resposta_texto}")
 
     except Exception as e:
-        app.logger.error(f"Erro ao processar 'enviar_mensagem' para {session.get('session_id', request.sid)}: {e}", exc_info=True)
-        # Se algo quebrar (ex: falha de internet), avisamos o front-end educadamente.
-        emit('erro', {"erro": f"Ocorreu um erro no servidor: {str(e)}"})
+        app.logger.error(f"Erro ao processar mensagem do Tutor: {e}", exc_info=True)
+        emit('erro', {"erro": "Houve um erro técnico ao gerar a resposta do seu Tutor."})
 
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    """
-    EVENTO: Disparado quando o usuário fecha a aba do navegador ou perde a conexão.
-    """
-    print(f"Cliente desconectado: {request.sid}, session_id: {session.get('session_id', 'N/A')}")
+    print(f"Cliente desconectado do Tutor: {request.sid}")
 
-
-# Inicia o servidor local. A porta padrão do Flask costuma ser a 5000.
 if __name__ == "__main__":
-    socketio.run(app, port=5000, allow_unsafe_werkzeug=True)
+    socketio.run(app, port=6500, debug=True)
