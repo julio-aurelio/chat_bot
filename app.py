@@ -12,7 +12,7 @@ import os
 # Carrega as variáveis ocultas do arquivo .env
 load_dotenv()
 
-MODELO = "gemini-2.0-flash-exp"
+MODELO = "gemini-3.5-flash"
 
 # PROMPT DE SISTEMA - CAPITÃO PÁTRIA PURO
 instrucoes = """
